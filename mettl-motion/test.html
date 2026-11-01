@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
+<style>body{margin:0;background:#0D0919}canvas{display:block}</style></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { loadBody, Body, applyPose, EQUIPMENT, Exercise } from './engine/motion.js';
+import RDL from './exercises/rdl.js';
+const W=480,H=560;
+const r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true}); r.setSize(W,H); r.toneMapping=THREE.ACESFilmicToneMapping; r.shadowMap.enabled=true; document.body.appendChild(r.domElement);
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x0D0919);
+scene.add(new THREE.HemisphereLight(0xC9C1E4,0x150F2B,0.6));
+const key=new THREE.DirectionalLight(0xFFF3E6,2.2); key.position.set(-2,3,2.5); key.castShadow=true; key.shadow.mapSize.set(1024,1024); Object.assign(key.shadow.camera,{left:-1.5,right:1.5,top:2,bottom:-1}); scene.add(key);
+const rim=new THREE.DirectionalLight(0xA99BFF,1.4); rim.position.set(2,2,-2.5); scene.add(rim);
+const floor=new THREE.Mesh(new THREE.CircleGeometry(1.6,64),new THREE.MeshStandardMaterial({color:0x150F2B,roughness:1})); floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
+const cam=new THREE.PerspectiveCamera(30,W/H,0.1,50);
+const bodies={}, equip={}; const ex=new Exercise(RDL);
+for(const s of ['male','female']){ const b=new Body(await loadBody('./assets/'+s+'.bin')); b.mesh.position.y=-b.floorY; bodies[s]=b; }
+for(const k in EQUIPMENT){ equip[k]=EQUIPMENT[k].build(); }
+window.render=(t,az,sex='male',eq='barbell',el=10)=>{
+  for(const s in bodies){ if(bodies[s].mesh.parent) scene.remove(bodies[s].mesh);} for(const k in equip){ if(equip[k].parent) equip[k].parent.remove(equip[k]); }
+  const b=bodies[sex]; scene.add(b.mesh); const E=EQUIPMENT[eq];
+  const smp=ex.sample(t); const sol=applyPose(b,smp.pose,E.load_,E.grip);
+  const o=equip[eq]; b.mesh.add(o); E.attach(o,sol);
+  const acts=ex.muscles(t); const u=b.material.userData.uniforms;
+  b.muscleNames.forEach((n,i)=>{const a=acts[n]; u.uAct.value[i]=a?a.v*(a.tier==='primary'?0.9:a.tier==='secondary'?0.55:0.35):0; u.uCol.value[i].set(a&&a.tier==='primary'?0xFFB84D:0xA99BFF); u.uPat.value[i]=a&&a.tier==='stabiliser'?1:0;});
+  const tgt=new THREE.Vector3(0,0.9,0); const d=E.width>1.5?4.6:3.8; const A=az*Math.PI/180, Ee=el*Math.PI/180;
+  cam.position.set(tgt.x+d*Math.sin(A)*Math.cos(Ee),tgt.y+d*Math.sin(Ee),tgt.z+d*Math.cos(A)*Math.cos(Ee)); cam.lookAt(tgt);
+  r.render(scene,cam);
+  const k=b.wp('lowerleg01.L'); return {bar:[sol.centre.x,sol.centre.y-b.floorY,sol.centre.z].map(v=>+v.toFixed(3)), knee:+(k.y-b.floorY+b.mesh.position.y- (-b.floorY)).toFixed(3), midfoot:+b.midfootZ.toFixed(3), phase:smp.phase.name};
+};
+window.ready=true;
+</script></body></html>
