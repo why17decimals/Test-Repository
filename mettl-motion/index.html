@@ -28,6 +28,13 @@ h1{font:700 40px/1 var(--disp);letter-spacing:-.03em;margin:2px 0 0;text-wrap:ba
 .presets{position:absolute;right:max(12px,env(safe-area-inset-right,0px));top:8px;display:flex;flex-direction:column;gap:6px}
 .presets button{width:52px;height:44px;border-radius:14px;background:rgba(31,24,57,.72);backdrop-filter:blur(8px);font:700 12px var(--body);color:var(--soft);border:2px solid transparent}
 .presets button[aria-pressed="true"]{border-color:var(--coral);color:var(--ink)}
+.expand{position:absolute;right:max(12px,env(safe-area-inset-right,0px));bottom:8px;height:44px;padding:0 14px;border-radius:14px;background:rgba(31,24,57,.72);backdrop-filter:blur(8px);font:700 12px var(--body);color:var(--soft);display:flex;align-items:center;gap:6px;z-index:3}
+.full .stage{position:fixed;inset:0;height:auto;margin:0;z-index:50;background:var(--bg)}
+.full .presets{top:max(12px,env(safe-area-inset-top,0px))}
+.full .expand{bottom:max(12px,env(safe-area-inset-bottom,0px))}
+.full .orbit-note{bottom:max(18px,env(safe-area-inset-bottom,0px))}
+.fcue{display:none;position:absolute;left:max(16px,env(safe-area-inset-left,0px));top:max(16px,env(safe-area-inset-top,0px));right:90px;font:700 22px/1.2 var(--disp);color:var(--ink);text-wrap:balance}
+.full .fcue{display:block}
 .orbit-note{position:absolute;left:max(16px,env(safe-area-inset-left,0px));bottom:10px;font:700 11px var(--body);letter-spacing:1.2px;text-transform:uppercase;color:var(--dim)}
 .sheet{position:relative;background:var(--sheet);border-radius:32px 32px 0 0;padding-block:12px 28px;padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px;flex:1}
 .grab{width:36px;height:4px;border-radius:2px;background:var(--dim);opacity:.45;margin:0 auto 2px}
@@ -83,6 +90,8 @@ h1{font:700 40px/1 var(--disp);letter-spacing:-.03em;margin:2px 0 0;text-wrap:ba
       <button data-az="40" aria-pressed="false">¾</button>
     </div>
     <div class="orbit-note" id="orbitNote">Turning · drag to look</div>
+    <div class="fcue" id="fcue" aria-hidden="true"></div>
+    <button class="expand" id="expand" aria-label="Full screen"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path id="expIcon" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"></path></svg><span id="expLabel">Full screen</span></button>
   </div>
   <section class="sheet" aria-label="Controls">
     <div class="grab" aria-hidden="true"></div>
@@ -215,6 +224,10 @@ function autoSpeed(az) { // degrees per second, slowing to a near-stop at the ke
   return 22 * (1 - 0.9 * w);
 }
 const note = document.getElementById('orbitNote');
+const app = document.querySelector('.app');
+function setFull(on) { app.classList.toggle('full', on); document.getElementById('expLabel').textContent = on ? 'Close' : 'Full screen'; document.getElementById('expand').setAttribute('aria-label', on ? 'Close full screen' : 'Full screen'); document.getElementById('expIcon').setAttribute('d', on ? 'M4 4l8 8M12 4l-8 8' : 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4'); }
+document.getElementById('expand').addEventListener('click', () => setFull(!app.classList.contains('full')));
+addEventListener('keydown', (e) => { if (e.key === 'Escape') setFull(false); });
 
 // ---------- muscles ----------
 const TIER = { primary: { col: 0xFFB84D, k: 1.0, id: 1 }, secondary: { col: 0xA99BFF, k: 0.75, id: 2 }, stabiliser: { col: 0x8E80E0, k: 0.55, id: 3 } };
@@ -243,7 +256,7 @@ function frame(now) {
     u.uTime.value = now / 1000; u.uFlow.value = reduce ? 0 : (ph === 'descent' || ph === 'ascent' ? 1 : 0.25); u.uFlowDir.value = ph === 'descent' ? -0.6 : 1.4;
     body.muscleNames.forEach((n, i) => { const a = acts[n]; let v = 0, col = 0xA99BFF, tr = 0; if (a) { const T = TIER[a.tier]; v = a.v * T.k; col = T.col; tr = T.id; if (S.iso && S.iso !== a.tier) v *= 0.06; } u.uAct.value[i] = v; u.uCol.value[i].set(col); u.uTier.value[i] = tr; });
     // cue + scrub
-    if (smp.phase.cue !== lastCue) { lastCue = smp.phase.cue; document.getElementById('cue').textContent = lastCue; }
+    if (smp.phase.cue !== lastCue) { lastCue = smp.phase.cue; document.getElementById('cue').textContent = lastCue; document.getElementById('fcue').textContent = lastCue; }
     const f = (S.t % ex.total) / ex.total;
     document.getElementById('fill').style.width = f * 100 + '%'; document.getElementById('thumb').style.left = f * 100 + '%';
     scrub.setAttribute('aria-valuenow', Math.round(f * 100));
@@ -257,7 +270,7 @@ function frame(now) {
     // framing: fit body height and the equipment's width at this angle
     const A = S.az * Math.PI / 180, El = S.el * Math.PI / 180;
     const vfov = camera.fov * Math.PI / 180, hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
-    const H = body.height + 0.12; const W = Math.abs(Math.sin(A)) * 1.3 + Math.abs(Math.cos(A)) * Math.max(E.width, 0.9);
+    const H = body.height + 0.12; const W = Math.abs(Math.sin(A)) * 1.3 + Math.abs(Math.cos(A)) * Math.max(camera.aspect < 0.8 ? Math.min(E.width, 1.55) : E.width, 0.9);
     const wide = camera.aspect > 1; const want = Math.max((H / 2) / Math.tan(vfov / 2) / (wide ? 0.76 : 0.9), (W / 2) / Math.tan(hfov / 2) / 0.94);
     S.dist += (want - S.dist) * Math.min(1, dt * 3); if (S.snap) S.dist = want;
     const tgt = new THREE.Vector3(0, body.height * (wide ? 0.56 : 0.47), body.midfootZ);
@@ -270,7 +283,7 @@ function frame(now) {
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
-window.mm = { S, setSex, ex, renderOnce: () => frame(performance.now()) }; // for review renders
+window.mm = { S, setSex, ex, setFull, renderOnce: () => frame(performance.now()) }; // for review renders
 await setSex('male');
 requestAnimationFrame(frame);
 window.ready = true;

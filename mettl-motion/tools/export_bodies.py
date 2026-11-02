@@ -4,7 +4,7 @@ Also bakes muscle-group masks (16 groups) and kit masks as vertex attributes."""
 import torch, anny, json, struct, numpy as np, sys, os
 OUT = sys.argv[1]
 os.makedirs(OUT, exist_ok=True)
-m = anny.Anny().to(dtype=torch.float32)
+m = anny.Anny(extrapolate_phenotypes=True).to(dtype=torch.float32)
 labels = list(m.bone_labels); B = m.bone_count
 parents = [int(p) for p in m.bone_parents]
 faces = m.faces.numpy().astype(np.uint32)
@@ -153,5 +153,5 @@ def export(name, pheno):
     print(name, 'height', header['height'], 'bytes', os.path.getsize(os.path.join(OUT, name + '.bin')))
     
 
-export('male', {'gender': 0.0, 'age': 0.5, 'muscle': 0.62, 'weight': 0.5, 'height': 0.55, 'proportions': 0.5})
-export('female', {'gender': 1.0, 'age': 0.5, 'muscle': 0.58, 'weight': 0.45, 'height': 0.5, 'proportions': 0.5})
+export('male', {'gender': 0.0, 'age': 0.45, 'muscle': 1.4, 'weight': 0.62, 'height': 0.68, 'proportions': 0.5})
+export('female', {'gender': 1.0, 'age': 0.45, 'muscle': 1.25, 'weight': 0.56, 'height': 0.62, 'proportions': 0.5})

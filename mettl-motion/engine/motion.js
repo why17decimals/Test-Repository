@@ -128,6 +128,7 @@ export function makeWireMaterial(muscleNames) {
         vec3 N = normalize(vN); vec3 V = normalize(vV);
         float facing = abs(dot(N, V));
         float rim = pow(1.0 - facing, 2.2);
+        float lit = 0.38 + 0.62 * max(dot(N, normalize(vec3(-0.45, 0.65, 0.6))), 0.0);
         // strongest working muscle at this point
         float best = 0.0; vec3 col = vec3(0.0); float tier = 0.0;
         for (int i = 0; i < ${n}; i++) {
@@ -143,9 +144,9 @@ export function makeWireMaterial(muscleNames) {
         // light travelling along the fibres while the muscle works
         float band = fract(vC0 * 2.2 - uTime * 0.55 * uFlowDir);
         float flow = smoothstep(0.0, 0.08, band) * (1.0 - smoothstep(0.08, 0.3, band)) * uFlow;
-        vec3 c = uFill + vec3(0.30, 0.27, 0.55) * rim * 0.55;
-        c += uLine * base * (0.20 + 0.25 * rim) * (1.0 - smoothstep(0.05, 0.3, best));
-        c += col * max(mus, half_ * 0.8) * m * (1.05 + 1.4 * flow);
+        vec3 c = uFill * (0.7 + 0.6 * lit) + vec3(0.30, 0.27, 0.55) * rim * 0.55;
+        c += uLine * base * (0.14 + 0.36 * lit + 0.2 * rim) * (1.0 - smoothstep(0.05, 0.3, best));
+        c += col * max(mus, half_ * 0.8) * m * (0.55 + 0.75 * lit + 1.4 * flow);
         c += col * m * (0.10 + 0.10 * flow);
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
@@ -394,9 +395,9 @@ export const EQUIPMENT = {
     label: 'Barbell', load: '100 kg',
     build() {
       const g = new THREE.Group();
-      g.add(cyl(0.014, 1.31, steel()));
+      const shaft = cyl(0.014, 1.31, steel(), 'x', 8); shaft.userData.edgeAngle = 1; g.add(shaft);
       for (const sx of [-1, 1]) {
-        const sleeve = cyl(0.025, 0.445, steel()); sleeve.position.x = sx * (0.655 + 0.2225); g.add(sleeve);
+        const sleeve = cyl(0.025, 0.445, steel(), 'x', 8); sleeve.userData.edgeAngle = 1; sleeve.position.x = sx * (0.655 + 0.2225); g.add(sleeve);
         const collar = cyl(0.032, 0.03, steel()); collar.position.x = sx * 0.67; g.add(collar);
         for (let p = 0; p < 2; p++) {
           const x = sx * (0.69 + 0.033 + p * 0.068);
@@ -418,7 +419,7 @@ export const EQUIPMENT = {
     build() {
       const g = new THREE.Group();
       const one = () => {
-        const d = new THREE.Group(); d.add(cyl(0.017, 0.13, steel()));
+        const d = new THREE.Group(); const hnd = cyl(0.017, 0.13, steel(), 'x', 8); hnd.userData.edgeAngle = 1; d.add(hnd);
         for (const sx of [-1, 1]) {
           const head = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.075, 6), plateMat()); head.userData.edgeAngle = 1;
           head.rotation.z = Math.PI / 2; head.rotation.x = Math.PI / 6; head.position.x = sx * 0.1025; head.castShadow = true; d.add(head);
