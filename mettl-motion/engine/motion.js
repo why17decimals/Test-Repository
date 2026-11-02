@@ -80,6 +80,83 @@ export function makeBodyMaterial(muscleNames) {
   return mat;
 }
 
+
+// ---------- Wireframe material: dark body, contour lines, muscles lit in the lines ----------
+// tier: 0 none, 1 primary, 2 secondary, 3 stabiliser
+export function makeWireMaterial(muscleNames) {
+  const n = muscleNames.length;
+  const uniforms = {
+    uAct: { value: new Array(n).fill(0) },
+    uCol: { value: new Array(n).fill(0).map(() => new THREE.Color(0xffb84d)) },
+    uTier: { value: new Array(n).fill(0) },
+    uTime: { value: 0 }, uFlow: { value: 0 }, uFlowDir: { value: 1 },
+    uSpacing: { value: 0.026 },
+    uLine: { value: new THREE.Color(0xa99bff) }, uFill: { value: new THREE.Color(0x120d26) },
+  };
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: `
+      #include <common>
+      #include <skinning_pars_vertex>
+      attribute vec4 mA; attribute vec4 mB; attribute vec4 mC; attribute vec4 mD;
+      attribute float contour; attribute float arc;
+      varying vec4 vA; varying vec4 vB; varying vec4 vC; varying vec4 vD;
+      varying float vC0; varying float vArc; varying vec3 vN; varying vec3 vV;
+      void main() {
+        #include <skinbase_vertex>
+        #include <beginnormal_vertex>
+        #include <skinnormal_vertex>
+        #include <defaultnormal_vertex>
+        #include <begin_vertex>
+        #include <skinning_vertex>
+        #include <project_vertex>
+        vA = mA; vB = mB; vC = mC; vD = mD; vC0 = contour; vArc = arc;
+        vN = normalize(transformedNormal); vV = -mvPosition.xyz;
+      }`,
+    fragmentShader: `
+      uniform float uAct[${n}]; uniform vec3 uCol[${n}]; uniform float uTier[${n}];
+      uniform float uTime; uniform float uFlow; uniform float uFlowDir; uniform float uSpacing;
+      uniform vec3 uLine; uniform vec3 uFill;
+      varying vec4 vA; varying vec4 vB; varying vec4 vC; varying vec4 vD;
+      varying float vC0; varying float vArc; varying vec3 vN; varying vec3 vV;
+      float mk(int i){ vec4 v = i<4?vA:(i<8?vB:(i<12?vC:vD)); int j = i - (i/4)*4; return j==0?v.x:(j==1?v.y:(j==2?v.z:v.w)); }
+      float lineAt(float c, float spacing, float width) {
+        float u = c / spacing; float d = abs(fract(u - 0.5) - 0.5) / max(fwidth(u), 1e-4);
+        return 1.0 - smoothstep(width - 0.6, width + 0.6, d);
+      }
+      void main() {
+        vec3 N = normalize(vN); vec3 V = normalize(vV);
+        float facing = abs(dot(N, V));
+        float rim = pow(1.0 - facing, 2.2);
+        // strongest working muscle at this point
+        float best = 0.0; vec3 col = vec3(0.0); float tier = 0.0;
+        for (int i = 0; i < ${n}; i++) {
+          float m = mk(i) * uAct[i];
+          if (m > best) { best = m; col = uCol[i]; tier = uTier[i]; }
+        }
+        float stab = step(2.5, tier);
+        float dash = mix(1.0, step(0.45, fract(vArc / 0.018)), stab);
+        float m = best * dash;
+        float base = lineAt(vC0, uSpacing, 0.55);
+        float mus = lineAt(vC0, uSpacing, 0.55 + 1.1 * best);
+        float half_ = lineAt(vC0 + uSpacing * 0.5, uSpacing, 0.5) * step(0.5, 1.0 - stab) * smoothstep(0.25, 0.6, best);
+        // light travelling along the fibres while the muscle works
+        float band = fract(vC0 * 2.2 - uTime * 0.55 * uFlowDir);
+        float flow = smoothstep(0.0, 0.08, band) * (1.0 - smoothstep(0.08, 0.3, band)) * uFlow;
+        vec3 c = uFill + vec3(0.30, 0.27, 0.55) * rim * 0.55;
+        c += uLine * base * (0.20 + 0.25 * rim) * (1.0 - smoothstep(0.05, 0.3, best));
+        c += col * max(mus, half_ * 0.8) * m * (1.05 + 1.4 * flow);
+        c += col * m * (0.10 + 0.10 * flow);
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  mat.toneMapped = false;
+  mat.userData.uniforms = uniforms;
+  return mat;
+}
+
 // ---------- Rig ----------
 export class Body {
   constructor(data) {
@@ -94,8 +171,26 @@ export class Body {
     g.setAttribute('mA', m4(0)); g.setAttribute('mB', m4(1)); g.setAttribute('mC', m4(2)); g.setAttribute('mD', m4(3));
     g.setAttribute('kitW', new THREE.BufferAttribute(kit, 4, true));
     g.computeVertexNormals();
+    { // contour coordinate: height for torso/legs, distance down the arm for arms; arc: around the body
+      const B = header.bones.length, P = (i) => new THREE.Vector3().fromArray(boneMats, i * 16 + 12);
+      const bi = Object.fromEntries(header.bones.map((n, i) => [n, i]));
+      const armSet = new Set(header.bones.map((n, i) => (/^(upperarm|lowerarm|wrist|finger|metacarpal)/.test(n) ? i : -1)).filter((i) => i >= 0));
+      const S = { L: P(bi['upperarm01.L']), R: P(bi['upperarm01.R']) };
+      const Wr = { L: P(bi['wrist.L']), R: P(bi['wrist.R']) };
+      const dir = { L: Wr.L.clone().sub(S.L).normalize(), R: Wr.R.clone().sub(S.R).normalize() };
+      const contour = new Float32Array(V), arc = new Float32Array(V); const p = new THREE.Vector3();
+      for (let v = 0; v < V; v++) {
+        p.fromArray(pos, v * 3); let wa = 0;
+        for (let k = 0; k < 4; k++) if (armSet.has(skinIndex[v * 4 + k])) wa += skinWeight[v * 4 + k];
+        const sd = p.x > 0 ? 'L' : 'R'; const along = p.clone().sub(S[sd]).dot(dir[sd]);
+        contour[v] = (1 - wa) * p.y + wa * (S[sd].y - along);
+        arc[v] = Math.atan2(p.x, p.z) * 0.14;
+      }
+      g.setAttribute('contour', new THREE.BufferAttribute(contour, 1));
+      g.setAttribute('arc', new THREE.BufferAttribute(arc, 1));
+    }
     this.muscleNames = header.muscles;
-    this.material = makeBodyMaterial(this.muscleNames);
+    this.material = data.style === 'skin' ? makeBodyMaterial(this.muscleNames) : makeWireMaterial(this.muscleNames);
     const bones = []; const restW = [];
     header.bones.forEach((name, i) => {
       const b = new THREE.Bone(); b.name = name;
@@ -276,9 +371,19 @@ function curlFingers(body, amt) {
 }
 
 // ---------- Equipment ----------
-const steel = () => new THREE.MeshStandardMaterial({ color: 0x8e88a6, metalness: 0.8, roughness: 0.35 });
-const plateMat = () => new THREE.MeshStandardMaterial({ color: 0x2a2342, roughness: 0.6, metalness: 0.1 });
-const rimMat = () => new THREE.MeshStandardMaterial({ color: 0xa99bff, roughness: 0.5, emissive: 0x2a2060 });
+const steel = () => new THREE.MeshBasicMaterial({ color: 0x1c1636 });
+const plateMat = () => new THREE.MeshBasicMaterial({ color: 0x151030 });
+const rimMat = () => new THREE.MeshBasicMaterial({ color: 0xc9c1e4 });
+// add crisp edge lines to every mesh in an equipment group (wireframe look)
+export function outline(group, color = 0xc9c1e4, opacity = 0.85) {
+  const add = [];
+  group.traverse((m) => { if (m.isMesh && !m.userData.isEdge) add.push(m); });
+  for (const m of add) {
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, m.userData.edgeAngle ?? 25), new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
+    e.userData.isEdge = true; e.userData.side = m.userData.side; m.add(e);
+  }
+  return group;
+}
 function cyl(r, len, mat, axis = 'x', seg = 40) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, seg), mat);
   if (axis === 'x') m.rotation.z = Math.PI / 2; if (axis === 'z') m.rotation.x = Math.PI / 2;
@@ -315,7 +420,7 @@ export const EQUIPMENT = {
       const one = () => {
         const d = new THREE.Group(); d.add(cyl(0.017, 0.13, steel()));
         for (const sx of [-1, 1]) {
-          const head = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.075, 6), plateMat());
+          const head = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.075, 6), plateMat()); head.userData.edgeAngle = 1;
           head.rotation.z = Math.PI / 2; head.rotation.x = Math.PI / 6; head.position.x = sx * 0.1025; head.castShadow = true; d.add(head);
         }
         return d;
@@ -331,7 +436,7 @@ export const EQUIPMENT = {
     label: 'Kettlebell', load: '24 kg',
     build() {
       const g = new THREE.Group();
-      const bell = new THREE.Mesh(new THREE.SphereGeometry(0.105, 48, 32), plateMat()); bell.position.y = -0.155; bell.castShadow = true;
+      const bell = new THREE.Mesh(new THREE.SphereGeometry(0.105, 14, 9), plateMat()); bell.position.y = -0.155; bell.castShadow = true; bell.userData.edgeAngle = 1;
       const handle = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.016, 16, 48, Math.PI), steel()); handle.position.y = -0.075; handle.castShadow = true;
       const base = cyl(0.07, 0.01, plateMat(), 'y'); base.position.y = -0.255;
       g.add(bell, handle, base); return g;
